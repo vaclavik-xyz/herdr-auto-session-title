@@ -2,6 +2,11 @@
 
 import { writeFile } from "node:fs/promises";
 
+if (process.env.FAKE_CODEX_REQUIRE_STDIN_EOF === "1") {
+  process.stdin.resume();
+  await new Promise((resolve) => process.stdin.on("end", resolve));
+}
+
 const args = process.argv.slice(2);
 const outputIndex = args.indexOf("--output-last-message");
 const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;

@@ -13,7 +13,8 @@ The plugin runs after `pane.agent_detected` and useful
 1. Reads the first usable user message from the local agent session JSONL.
 2. Runs an isolated, ephemeral `codex exec` turn to generate a title of at most
    36 characters.
-3. Reports the title to Herdr with pane display metadata.
+3. Reports the title to Herdr with pane display metadata and renames the
+   containing tab.
 4. For Codex panes, reads the native thread through `codex app-server` and sets
    its name with `thread/name/set`.
 
@@ -27,10 +28,11 @@ to regenerate it.
 | Claude Code | Yes | No |
 | Other agents | Ignored | No |
 
-Manual titles win. The plugin only replaces a Herdr or Codex title when it is
-empty or still equals the last title written by this plugin. If a Codex thread
-already has a native title, that title is adopted as the Herdr title so both
-surfaces remain synchronized.
+Manual titles win. The plugin only replaces a Herdr pane title, tab label, or
+Codex title when it is empty, still has its numeric default, or still equals
+the last title written by this plugin. If a Codex thread already has a native
+title, that title is adopted as the Herdr title so the surfaces remain
+synchronized.
 
 ## Requirements
 

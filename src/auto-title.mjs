@@ -56,29 +56,42 @@ export async function runAutoTitle({
       }
 
       const previous = await readPaneState({ paneId, stateDir });
-      const currentTitle = pane.title?.trim() || null;
-      if (currentTitle && currentTitle !== previous?.herdrTitle) {
-        return { status: "preserved", title: currentTitle };
+      const currentPaneTitle = pane.title?.trim() || null;
+      const tabLabel = pane.tab?.label?.trim() || null;
+      const defaultTabLabel =
+        tabLabel && pane.tab?.number != null && tabLabel === String(pane.tab.number);
+      const currentTabTitle = defaultTabLabel ? null : tabLabel;
+      const ownedPaneTitle = confirmedPaneTitle(previous);
+      const ownedTabTitle = confirmedTabTitle(previous);
+      const manualTitle =
+        (currentPaneTitle && currentPaneTitle !== ownedPaneTitle
+          ? currentPaneTitle
+          : null) ||
+        (currentTabTitle && currentTabTitle !== ownedTabTitle ? currentTabTitle : null);
+      if (manualTitle) {
+        return { status: "preserved", title: manualTitle };
       }
 
       const sessionKey = [agent, session.source, session.kind, session.value].join(":");
       const sameSession = previous?.sessionKey === sessionKey;
       const force = env.HERDR_PLUGIN_ACTION_ID === "refresh";
-      if (sameSession && previous.herdrTitle && !force) {
-        if (agent === "codex" && previous.codexTitle !== previous.herdrTitle) {
-          return await retryCodexSync({
-            codexBin,
-            deps,
-            env,
-            herdrBin,
-            pane,
-            paneId,
-            previous,
-            stateDir,
-            threadId: session.value,
-          });
-        }
-        return { status: "unchanged", title: previous.herdrTitle };
+      if (
+        sameSession &&
+        (previous.pendingHerdrTitle || previous.herdrTitle) &&
+        !force
+      ) {
+        return await reconcileExistingSession({
+          agent,
+          codexBin,
+          deps,
+          env,
+          herdrBin,
+          pane,
+          paneId,
+          previous,
+          stateDir,
+          threadId: session.value,
+        });
       }
 
       const sessionPath =
@@ -113,7 +126,7 @@ export async function runAutoTitle({
       if (!generated?.title) return { status: "pending", reason: "empty-title" };
 
       let resolvedTitle = generated.title;
-      let codexTitle = null;
+      let codexTitle = sameSession ? previous?.codexTitle || null : null;
       if (agent === "codex") {
         try {
           const synced = await deps.syncCodexThreadTitle({
@@ -125,26 +138,51 @@ export async function runAutoTitle({
           });
           resolvedTitle = synced.title;
           codexTitle = synced.title;
-        } catch {
-          codexTitle = null;
-        }
+        } catch {}
       }
 
-      await deps.writePaneTitle({
-        appliesToSource: session.source,
+      const stagedState = {
+        ...previous,
+        codexTitle,
+        herdrPaneTitle: confirmedPaneTitle(previous),
+        herdrTabTitle: confirmedTabTitle(previous),
+        herdrTitle: previous?.herdrTitle || null,
+        pendingHerdrTitle: resolvedTitle,
+        promptHash: hash(prompt),
+        sessionKey,
+      };
+      await writePaneState({ paneId, state: stagedState, stateDir });
+      const herdrResult = await deps.writePaneTitle({
+        agent,
         env,
         herdrBin,
+        onPaneTitleWritten: async () => {
+          stagedState.herdrPaneTitle = resolvedTitle;
+          await writePaneState({ paneId, state: stagedState, stateDir });
+        },
+        onTabTitleWritten: async () => {
+          stagedState.herdrTabTitle = resolvedTitle;
+          await writePaneState({ paneId, state: stagedState, stateDir });
+        },
         paneId,
+        previousPluginTitle: stagedState.herdrTabTitle,
+        tabId: pane.tab_id,
         title: resolvedTitle,
       });
+      if (herdrResult?.status === "preserved") {
+        await writePaneState({ paneId, state: stagedState, stateDir });
+        return herdrResult;
+      }
+      const completedState = {
+        ...stagedState,
+        herdrPaneTitle: resolvedTitle,
+        herdrTabTitle: pane.tab_id ? resolvedTitle : stagedState.herdrTabTitle,
+        herdrTitle: resolvedTitle,
+      };
+      delete completedState.pendingHerdrTitle;
       await writePaneState({
         paneId,
-        state: {
-          codexTitle,
-          herdrTitle: resolvedTitle,
-          promptHash: hash(prompt),
-          sessionKey,
-        },
+        state: completedState,
         stateDir,
       });
       return { status: "updated", title: resolvedTitle };
@@ -155,7 +193,8 @@ export async function runAutoTitle({
   }
 }
 
-async function retryCodexSync({
+async function reconcileExistingSession({
+  agent,
   codexBin,
   deps,
   env,
@@ -166,32 +205,76 @@ async function retryCodexSync({
   stateDir,
   threadId,
 }) {
-  try {
-    const synced = await deps.syncCodexThreadTitle({
-      codexBin,
-      env,
-      previousPluginTitle: previous.codexTitle,
-      threadId,
-      title: previous.herdrTitle,
-    });
-    if (synced.title !== pane.title) {
-      await deps.writePaneTitle({
-        appliesToSource: pane.agent_session.source,
+  let target = previous.pendingHerdrTitle || previous.herdrTitle;
+  let codexTitle = previous.codexTitle;
+  let codexUpdated = false;
+  if (agent === "codex" && codexTitle !== target) {
+    try {
+      const synced = await deps.syncCodexThreadTitle({
+        codexBin,
         env,
-        herdrBin,
-        paneId,
-        title: synced.title,
+        previousPluginTitle: previous.codexTitle,
+        threadId,
+        title: target,
       });
+      target = synced.title;
+      codexTitle = synced.title;
+      codexUpdated = codexTitle !== previous.codexTitle;
+    } catch {
+      // Codex and Herdr are reconciled independently so either side can recover.
     }
+  }
+
+  let herdrUpdated = false;
+  if (!herdrPresentationMatches(pane, target)) {
+    const stagedState = {
+      ...previous,
+      codexTitle,
+      herdrPaneTitle: confirmedPaneTitle(previous),
+      herdrTabTitle: confirmedTabTitle(previous),
+      pendingHerdrTitle: target,
+    };
     await writePaneState({
       paneId,
-      state: { ...previous, codexTitle: synced.title, herdrTitle: synced.title },
+      state: stagedState,
       stateDir,
     });
-    return { status: "updated", title: synced.title };
-  } catch {
-    return { status: "unchanged", title: previous.herdrTitle };
+    const reconciled = await deps.writePaneTitle({
+      agent,
+      env,
+      herdrBin,
+      onPaneTitleWritten: async () => {
+        stagedState.herdrPaneTitle = target;
+        await writePaneState({ paneId, state: stagedState, stateDir });
+      },
+      onTabTitleWritten: async () => {
+        stagedState.herdrTabTitle = target;
+        await writePaneState({ paneId, state: stagedState, stateDir });
+      },
+      paneId,
+      previousPluginTitle: stagedState.herdrTabTitle,
+      tabId: pane.tab_id,
+      title: target,
+    });
+    if (reconciled?.status === "preserved") {
+      await writePaneState({ paneId, state: stagedState, stateDir });
+      return reconciled;
+    }
+    herdrUpdated = true;
   }
+
+  const reconciledState = {
+    ...previous,
+    codexTitle,
+    herdrPaneTitle: target,
+    herdrTabTitle: pane.tab_id ? target : confirmedTabTitle(previous),
+    herdrTitle: target,
+  };
+  delete reconciledState.pendingHerdrTitle;
+  await writePaneState({ paneId, state: reconciledState, stateDir });
+  const status =
+    codexUpdated || herdrUpdated || previous.pendingHerdrTitle ? "updated" : "unchanged";
+  return { status, title: target };
 }
 
 function defaultSessionRoots(env) {
@@ -205,6 +288,21 @@ function defaultSessionRoots(env) {
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function herdrPresentationMatches(pane, title) {
+  return (
+    pane.title?.trim() === title &&
+    (!pane.tab || pane.tab.label?.trim() === title)
+  );
+}
+
+function confirmedPaneTitle(state) {
+  return state?.herdrPaneTitle ?? state?.herdrTitle ?? null;
+}
+
+function confirmedTabTitle(state) {
+  return state?.herdrTabTitle ?? state?.herdrTitle ?? null;
 }
 
 function parseJson(value) {

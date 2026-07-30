@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import { isolatedChildEnv } from "./process-env.mjs";
 import {
@@ -9,8 +8,6 @@ import {
   sanitizeDescription,
   sanitizeTitle,
 } from "./title.mjs";
-
-const execFileAsync = promisify(execFile);
 
 export async function generateTitle({
   codexBin = "codex",
@@ -47,7 +44,7 @@ export async function generateTitle({
   args.push(buildGenerationPrompt(prompt));
 
   try {
-    await execFileAsync(codexBin, args, {
+    await execFileWithoutInput(codexBin, args, {
       env: isolatedChildEnv(env),
       timeout: timeoutMs,
       maxBuffer: 1024 * 1024,
@@ -63,4 +60,17 @@ export async function generateTitle({
   } finally {
     await rm(tempDir, { force: true, recursive: true });
   }
+}
+
+function execFileWithoutInput(file, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ stderr, stdout });
+    });
+    child.stdin?.end();
+  });
 }

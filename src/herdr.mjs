@@ -17,24 +17,66 @@ export async function readPane({
   });
   const pane = response?.result?.pane;
   if (!pane?.pane_id) throw new Error(`Herdr did not return pane ${paneId}`);
-  return pane;
+  if (!pane.tab_id) return pane;
+  const tabResponse = await runHerdrJson({
+    args: ["tab", "get", pane.tab_id],
+    env,
+    herdrBin,
+    timeoutMs,
+  });
+  const tab = tabResponse?.result?.tab;
+  if (!tab?.tab_id) throw new Error(`Herdr did not return tab ${pane.tab_id}`);
+  return { ...pane, tab };
 }
 
 export async function writePaneTitle({
-  appliesToSource = null,
+  agent = null,
   env = process.env,
   herdrBin = env.HERDR_BIN_PATH || "herdr",
+  onPaneTitleWritten = null,
+  onTabTitleWritten = null,
   paneId,
+  previousPluginTitle = null,
   source = "plugin:auto-session-title",
+  tabId = null,
   timeoutMs = 10_000,
   title,
 }) {
   const args = ["pane", "report-metadata", paneId, "--source", source];
-  if (appliesToSource) {
-    args.push("--applies-to-source", appliesToSource);
+  if (agent) {
+    args.push("--agent", agent);
   }
   args.push("--title", title);
   await runHerdrJson({ args, env, herdrBin, timeoutMs });
+  await onPaneTitleWritten?.({ title });
+  if (tabId) {
+    const response = await runHerdrJson({
+      args: ["tab", "get", tabId],
+      env,
+      herdrBin,
+      timeoutMs,
+    });
+    const tab = response?.result?.tab;
+    if (!tab?.tab_id) throw new Error(`Herdr did not return tab ${tabId}`);
+    const tabLabel = tab.label?.trim() || null;
+    const defaultTabLabel =
+      tabLabel && tab.number != null && tabLabel === String(tab.number);
+    if (tabLabel && !defaultTabLabel && tabLabel !== previousPluginTitle) {
+      return { status: "preserved", title: tabLabel };
+    }
+    if (tabLabel === title) {
+      await onTabTitleWritten?.({ title });
+      return { status: "unchanged", title };
+    }
+    await runHerdrJson({
+      args: ["tab", "rename", tabId, title],
+      env,
+      herdrBin,
+      timeoutMs,
+    });
+    await onTabTitleWritten?.({ title });
+  }
+  return { status: "updated", title };
 }
 
 async function runHerdrJson({ args, env, herdrBin, timeoutMs }) {

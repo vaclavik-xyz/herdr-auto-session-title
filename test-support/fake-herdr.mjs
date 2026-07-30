@@ -21,10 +21,28 @@ if (args[0] === "pane" && args[1] === "get") {
           agent_status: "working",
           cwd: "/tmp/project",
           pane_id: args[2],
+          tab_id: "w1:t1",
           title: null,
           workspace_id: "w1",
         },
         type: "pane_get",
+      },
+    }),
+  );
+}
+
+if (args[0] === "tab" && args[1] === "get") {
+  process.stdout.write(
+    JSON.stringify({
+      id: "fake:tab:get",
+      result: {
+        tab: {
+          label: process.env.FAKE_HERDR_TAB_LABEL || "1",
+          number: 1,
+          tab_id: args[2],
+          workspace_id: "w1",
+        },
+        type: "tab_info",
       },
     }),
   );

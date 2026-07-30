@@ -1,13 +1,19 @@
 const TITLE_PREFIX = /^title[:\s]+/i;
 const SURROUNDING_QUOTES = /^[`"'“”‘’]+|[`"'“”‘’]+$/g;
+const SKILL_COMMAND = /^\$([a-z][a-z0-9]*(?:-[a-z0-9]+)*)(?=\s|$)/i;
 
 export function sanitizeTitle(value, maxLength = 36) {
   let title = firstUsefulLine(value)
     .replace(TITLE_PREFIX, "")
     .replace(SURROUNDING_QUOTES, "")
     .replace(/\s+/g, " ")
-    .replace(/[.?!]+$/u, "")
     .trim();
+  const skillCommand = title.match(SKILL_COMMAND);
+  if (skillCommand) {
+    title = skillCommand[1].replaceAll("-", " ");
+  } else {
+    title = title.replace(/[.?!]+$/u, "");
+  }
   if (!title) return null;
   if (title.length <= maxLength) return title;
   return `${title.slice(0, maxLength - 1).trimEnd()}…`;

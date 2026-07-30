@@ -54,3 +54,25 @@ test("generateTitle runs an isolated ephemeral structured Codex turn", async () 
   );
   await assert.rejects(access(record.outputPath), { code: "ENOENT" });
 });
+
+test("generateTitle closes Codex stdin before waiting for structured output", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-generator-eof-"));
+  const recordPath = path.join(stateDir, "record.json");
+  await chmod(fakeCodex, 0o755);
+
+  const result = await generateTitle({
+    codexBin: fakeCodex,
+    cwd: stateDir,
+    env: {
+      ...process.env,
+      FAKE_CODEX_RECORD: recordPath,
+      FAKE_CODEX_REQUIRE_STDIN_EOF: "1",
+    },
+    pluginRoot,
+    prompt: "Fix the checkout race",
+    stateDir,
+    timeoutMs: 1_000,
+  });
+
+  assert.equal(result.title, "Fix checkout race");
+});
