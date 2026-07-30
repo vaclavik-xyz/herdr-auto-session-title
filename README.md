@@ -38,8 +38,10 @@ Manual titles win. The plugin only replaces a Herdr pane title, tab label, or
 Codex title when it is empty, still has its numeric default, or still equals
 the last title written by this plugin. If a Codex thread already has a native
 title, that title is adopted as the Herdr title so the surfaces remain
-synchronized. On Codex exit, cleanup is subject to the same ownership rule: a
-manually renamed tab is preserved.
+synchronized without claiming ownership of the native title. On Codex exit,
+cleanup is subject to the same ownership rule: a manually renamed tab is
+preserved. If a delayed exit event arrives after another session is already
+active, cleanup finishes first and the new session is synchronized immediately.
 
 ## Requirements
 
@@ -98,6 +100,11 @@ The action is also available through Herdr's plugin action UI.
   native Codex titles are never overwritten after they diverge from the
   plugin-owned value. Partial exit cleanup is retried on a later pane focus or
   agent lifecycle event.
+
+Herdr 0.7.5 does not expose an atomic conditional tab rename. The plugin checks
+the current tab label immediately before renaming it, but a manual rename that
+lands between that check and the rename command can still be overwritten. Pane
+metadata and native Codex title updates retain their ownership checks.
 
 ## Development
 

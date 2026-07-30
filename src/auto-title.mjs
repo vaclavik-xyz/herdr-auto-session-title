@@ -66,7 +66,6 @@ export async function runAutoTitle({
         isCodexReleaseEvent(event, previous) ||
         shouldRecoverMissedCodexRelease(event, pane, previous);
       if (releaseRequested || previous?.releasePending) {
-        const activeSessionDuringCleanup = Boolean(pane.agent_session?.value);
         const releaseResult = await clearReleasedPresentation({
           deps,
           env,
@@ -77,8 +76,8 @@ export async function runAutoTitle({
           stateDir,
         });
         previous = null;
-        if (releaseRequested || !activeSessionDuringCleanup) return releaseResult;
         pane = await deps.readPane({ env, herdrBin, paneId });
+        if (!pane.agent_session?.value) return releaseResult;
       }
       if (shouldWaitForCodexSession(event, pane)) {
         pane = await waitForAgentSession({
@@ -139,7 +138,8 @@ export async function runAutoTitle({
       let generated = null;
       let resolvedTitle = null;
       let codexTitle = sameSession ? previous?.codexTitle || null : null;
-      if (shouldPreferNativeCodexTitle({ agent, event, force, sameSession })) {
+      let codexOwnedTitle = sameSession ? confirmedCodexOwnedTitle(previous) : null;
+      if (shouldPreferNativeCodexTitle({ agent, force, sameSession })) {
         try {
           resolvedTitle = await deps.readCodexThreadTitle({
             codexBin,
@@ -187,18 +187,20 @@ export async function runAutoTitle({
             const synced = await deps.syncCodexThreadTitle({
               codexBin,
               env,
-              previousPluginTitle: sameSession ? previous?.codexTitle : null,
+              previousPluginTitle: codexOwnedTitle,
               threadId: session.value,
               title: generated.title,
             });
             resolvedTitle = synced.title;
             codexTitle = synced.title;
+            codexOwnedTitle = synced.status === "updated" ? synced.title : null;
           } catch {}
         }
       }
 
       const stagedState = {
         ...previous,
+        codexOwnedTitle,
         codexTitle,
         herdrPaneTitle: confirmedPaneTitle(previous),
         herdrTabTitle: confirmedTabTitle(previous),
@@ -263,19 +265,21 @@ async function reconcileExistingSession({
 }) {
   let target = previous.pendingHerdrTitle || previous.herdrTitle;
   let codexTitle = previous.codexTitle;
+  let codexOwnedTitle = confirmedCodexOwnedTitle(previous);
   let codexUpdated = false;
   if (agent === "codex" && codexTitle !== target) {
     try {
       const synced = await deps.syncCodexThreadTitle({
         codexBin,
         env,
-        previousPluginTitle: previous.codexTitle,
+        previousPluginTitle: codexOwnedTitle,
         threadId,
         title: target,
       });
       target = synced.title;
       codexTitle = synced.title;
-      codexUpdated = codexTitle !== previous.codexTitle;
+      codexOwnedTitle = synced.status === "updated" ? synced.title : null;
+      codexUpdated = synced.status === "updated";
     } catch {
       // Codex and Herdr are reconciled independently so either side can recover.
     }
@@ -285,6 +289,7 @@ async function reconcileExistingSession({
   if (!herdrPresentationMatches(pane, target)) {
     const stagedState = {
       ...previous,
+      codexOwnedTitle,
       codexTitle,
       herdrPaneTitle: confirmedPaneTitle(previous),
       herdrTabTitle: confirmedTabTitle(previous),
@@ -321,6 +326,7 @@ async function reconcileExistingSession({
 
   const reconciledState = {
     ...previous,
+    codexOwnedTitle,
     codexTitle,
     herdrPaneTitle: target,
     herdrTabTitle: pane.tab_id ? target : confirmedTabTitle(previous),
@@ -394,13 +400,8 @@ async function waitForAgentSession({
   return current;
 }
 
-function shouldPreferNativeCodexTitle({ agent, event, force, sameSession }) {
-  return (
-    agent === "codex" &&
-    !force &&
-    !sameSession &&
-    (event?.event === "pane.agent_detected" || event?.event === "pane.focused")
-  );
+function shouldPreferNativeCodexTitle({ agent, force, sameSession }) {
+  return agent === "codex" && !force && !sameSession;
 }
 
 function shouldWaitForCodexSession(event, pane) {
@@ -450,6 +451,14 @@ function confirmedPaneTitle(state) {
 
 function confirmedTabTitle(state) {
   return state?.herdrTabTitle ?? state?.herdrTitle ?? null;
+}
+
+function confirmedCodexOwnedTitle(state) {
+  if (!state) return null;
+  if (Object.prototype.hasOwnProperty.call(state, "codexOwnedTitle")) {
+    return state.codexOwnedTitle ?? null;
+  }
+  return state.codexTitle ?? null;
 }
 
 function parseJson(value) {

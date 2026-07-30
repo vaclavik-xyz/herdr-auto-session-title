@@ -250,3 +250,21 @@ Expected: the local plugin links without manifest validation errors on Herdr 0.7
 git add README.md herdr-plugin.toml test/auto-title.test.mjs docs/superpowers/plans/2026-07-30-codex-session-lifecycle-titles.md
 git commit -m "docs: describe Codex title lifecycle sync"
 ```
+
+### Task 4: Review follow-ups for ownership and event races
+
+- [x] Separate the last observed Codex title (`codexTitle`) from the title
+  confirmed as plugin-written (`codexOwnedTitle`). New state records an explicit
+  `null` owner when adopting a pre-existing native title; legacy state without
+  the new field retains its earlier ownership interpretation.
+- [x] After release cleanup, always reread the pane and synchronize any live
+  replacement session, including when the release event itself was delayed.
+- [x] Prefer `thread/read` for every non-forced, different Codex session,
+  including `pane.agent_status_changed` as the first switch event.
+- [x] Add RED/GREEN regressions for adopted-title refresh, delayed release, and
+  status-first session switching.
+- [x] Run final syntax, full-suite, whitespace, and Herdr link verification.
+
+Herdr 0.7.5 exposes separate tab-read and tab-rename commands, with no atomic
+compare-and-set rename. A manual rename racing between those commands remains
+an upstream limitation and is documented in the README.

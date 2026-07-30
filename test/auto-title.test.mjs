@@ -128,6 +128,7 @@ test("first Codex event generates once, syncs native title, and suppresses dupli
       generationCount += 1;
       return { title: "Fix checkout race", description: "Checkout locking regression" };
     },
+    readCodexThreadTitle: async () => null,
     readPane: async () => codexPane(paneTitle, tabTitle),
     locateSessionFile: async () => fixtureSession,
     syncCodexThreadTitle: async () => {
@@ -196,6 +197,52 @@ test("Codex detection waits for a resumed session and adopts its native title", 
   assert.equal(readCount, 2);
   assert.equal(readThreadId, "thread-resumed");
   assert.equal(writtenTitle, "Native resumed title");
+});
+
+test("manual refresh preserves a native Codex title adopted by the plugin", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-native-refresh-"));
+  let nativeTitle = "Manual native title";
+  let paneTitle = null;
+  let tabTitle = "1";
+  let previousPluginTitle = "not-called";
+  const deps = {
+    generateTitle: async () => ({
+      title: "Generated refresh title",
+      description: "Description",
+    }),
+    locateSessionFile: async () => fixtureSession,
+    readCodexThreadTitle: async () => nativeTitle,
+    readPane: async () => codexPane(paneTitle, tabTitle),
+    syncCodexThreadTitle: async ({ previousPluginTitle: previous, title }) => {
+      previousPluginTitle = previous;
+      if (nativeTitle && nativeTitle !== previous) {
+        return { status: "preserved", title: nativeTitle };
+      }
+      nativeTitle = title;
+      return { status: "updated", title };
+    },
+    writePaneTitle: async ({ title }) => {
+      paneTitle = title;
+      tabTitle = title;
+      return { status: "updated", title };
+    },
+  };
+
+  await runAutoTitle({ deps, env: detectionEnv(), stateDir });
+  const refreshed = await runAutoTitle({
+    deps,
+    env: invocationEnv({
+      HERDR_PLUGIN_ACTION_ID: "refresh",
+      HERDR_PLUGIN_EVENT: undefined,
+      HERDR_PLUGIN_EVENT_JSON: undefined,
+    }),
+    stateDir,
+  });
+
+  assert.deepEqual(refreshed, { status: "updated", title: "Manual native title" });
+  assert.equal(previousPluginTitle, null);
+  assert.equal(nativeTitle, "Manual native title");
+  assert.equal(paneTitle, "Manual native title");
 });
 
 test("a released Codex session clears owned pane and tab presentation", async () => {
@@ -362,6 +409,61 @@ test("release retry rereads the pane before synchronizing a newly resumed sessio
   assert.equal(writtenTitle, "Resumed title");
 });
 
+test("a delayed release event synchronizes the new active Codex session", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-delayed-release-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexOwnedTitle: "Old title",
+      codexTitle: "Old title",
+      herdrPaneTitle: "Old title",
+      herdrTabTitle: "Old title",
+      herdrTitle: "Old title",
+      promptHash: "old-hash",
+      sessionKey: "codex:herdr:codex:id:thread-old",
+    },
+    stateDir,
+  });
+  let paneTitle = "Old title";
+  let tabTitle = "Old title";
+  let readCount = 0;
+  let writtenTitle = null;
+
+  const result = await runAutoTitle({
+    deps: {
+      clearPaneTitle: async (input) => {
+        paneTitle = null;
+        tabTitle = "1";
+        await input.onPaneTitleCleared?.();
+        await input.onTabTitleCleared?.();
+        return { status: "updated" };
+      },
+      readCodexThreadTitle: async ({ threadId }) => {
+        assert.equal(threadId, "thread-new");
+        return "New active title";
+      },
+      readPane: async () => {
+        readCount += 1;
+        const pane = codexPane(paneTitle, tabTitle);
+        pane.agent_session.value = "thread-new";
+        return pane;
+      },
+      writePaneTitle: async ({ title }) => {
+        writtenTitle = title;
+        return { status: "updated", title };
+      },
+    },
+    env: releasedEnv(),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "updated", title: "New active title" });
+  assert.equal(readCount, 2);
+  assert.equal(writtenTitle, "New active title");
+  const state = await readPaneState({ paneId: "w1:p1", stateDir });
+  assert.equal(state.sessionKey, "codex:herdr:codex:id:thread-new");
+});
+
 test("pane focus adopts the native title after an in-process session switch", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-session-switch-"));
   await writePaneState({
@@ -408,6 +510,52 @@ test("pane focus adopts the native title after an in-process session switch", as
   const state = await readPaneState({ paneId: "w1:p1", stateDir });
   assert.equal(state.sessionKey, "codex:herdr:codex:id:thread-new");
   assert.equal(state.codexTitle, "New native title");
+});
+
+test("a status event adopts the native title of a different Codex session", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-status-switch-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexOwnedTitle: "Old title",
+      codexTitle: "Old title",
+      herdrPaneTitle: "Old title",
+      herdrTabTitle: "Old title",
+      herdrTitle: "Old title",
+      promptHash: "old-hash",
+      sessionKey: "codex:herdr:codex:id:thread-old",
+    },
+    stateDir,
+  });
+  const switchedPane = codexPane("Old title", "Old title");
+  switchedPane.agent_session.value = "thread-new";
+  let writtenTitle = null;
+  const forbidden = async () => {
+    assert.fail("a native title must skip session JSONL and generation");
+  };
+
+  const result = await runAutoTitle({
+    deps: {
+      extractSessionPrompt: forbidden,
+      generateTitle: forbidden,
+      locateSessionFile: forbidden,
+      readCodexThreadTitle: async ({ threadId }) => {
+        assert.equal(threadId, "thread-new");
+        return "Status native title";
+      },
+      readPane: async () => switchedPane,
+      syncCodexThreadTitle: forbidden,
+      writePaneTitle: async ({ title }) => {
+        writtenTitle = title;
+        return { status: "updated", title };
+      },
+    },
+    env: invocationEnv(),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "updated", title: "Status native title" });
+  assert.equal(writtenTitle, "Status native title");
 });
 
 test("a pre-existing Herdr title is treated as a manual override", async () => {
@@ -462,6 +610,7 @@ test("failed Codex sync retries independently and reconciles a later native titl
       generationCount += 1;
       return { title: "Generated title", description: "Generated description" };
     },
+    readCodexThreadTitle: async () => null,
     readPane: async () => codexPane(paneTitle),
     locateSessionFile: async () => fixtureSession,
     syncCodexThreadTitle: async () => {
@@ -494,6 +643,7 @@ test("Herdr ownership state is staged before a partial title write", async () =>
     runAutoTitle({
       deps: {
         generateTitle: async () => ({ title: "Generated title", description: "Description" }),
+        readCodexThreadTitle: async () => null,
         readPane: async () => codexPane(),
         locateSessionFile: async () => fixtureSession,
         syncCodexThreadTitle: async () => ({ status: "updated", title: "Generated title" }),
@@ -794,6 +944,7 @@ test("a different session retains confirmed surface ownership until replacement 
       generationCount += 1;
       return { title: "New title", description: "Description" };
     },
+    readCodexThreadTitle: async () => null,
     readPane: async () => codexPane(paneTitle, tabTitle),
     locateSessionFile: async () => fixtureSession,
     syncCodexThreadTitle: async ({ title }) => ({ status: "updated", title }),
@@ -927,6 +1078,7 @@ test("manual refresh replaces only titles previously owned by the plugin", async
   let previousPluginTitle = null;
   const deps = {
     generateTitle: async () => ({ title: generated, description: "Description" }),
+    readCodexThreadTitle: async () => null,
     readPane: async () => codexPane(paneTitle),
     locateSessionFile: async () => fixtureSession,
     syncCodexThreadTitle: async (input) => {
