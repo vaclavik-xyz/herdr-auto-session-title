@@ -1,0 +1,4 @@
+{"type":"session_meta","payload":{"id":"codex-session-1"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"<local-command-caveat>ignored</local-command-caveat>"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Fix the checkout race in src/cart.ts"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Also add a regression test"}}
