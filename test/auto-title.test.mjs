@@ -245,6 +245,51 @@ test("manual refresh preserves a native Codex title adopted by the plugin", asyn
   assert.equal(paneTitle, "Manual native title");
 });
 
+test("manual refresh treats an ambiguous legacy Codex title as unowned", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-legacy-native-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexTitle: "Legacy manual title",
+      herdrPaneTitle: "Legacy manual title",
+      herdrTabTitle: "Legacy manual title",
+      herdrTitle: "Legacy manual title",
+      promptHash: "existing-hash",
+      sessionKey: "codex:herdr:codex:id:thread-123",
+    },
+    stateDir,
+  });
+  let nativeTitle = "Legacy manual title";
+  let previousPluginTitle = "not-called";
+
+  const result = await runAutoTitle({
+    deps: {
+      generateTitle: async () => ({ title: "Generated title", description: "Description" }),
+      locateSessionFile: async () => fixtureSession,
+      readPane: async () => codexPane("Legacy manual title", "Legacy manual title"),
+      syncCodexThreadTitle: async ({ previousPluginTitle: previous, title }) => {
+        previousPluginTitle = previous;
+        if (nativeTitle && nativeTitle !== previous) {
+          return { status: "preserved", title: nativeTitle };
+        }
+        nativeTitle = title;
+        return { status: "updated", title };
+      },
+      writePaneTitle: async ({ title }) => ({ status: "updated", title }),
+    },
+    env: invocationEnv({
+      HERDR_PLUGIN_ACTION_ID: "refresh",
+      HERDR_PLUGIN_EVENT: undefined,
+      HERDR_PLUGIN_EVENT_JSON: undefined,
+    }),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "updated", title: "Legacy manual title" });
+  assert.equal(previousPluginTitle, null);
+  assert.equal(nativeTitle, "Legacy manual title");
+});
+
 test("a released Codex session clears owned pane and tab presentation", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-release-"));
   await writePaneState({
@@ -464,11 +509,53 @@ test("a delayed release event synchronizes the new active Codex session", async 
   assert.equal(state.sessionKey, "codex:herdr:codex:id:thread-new");
 });
 
+test("a stale release event preserves an already synchronized replacement session", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-stale-release-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexOwnedTitle: "New active title",
+      codexTitle: "New active title",
+      herdrPaneTitle: "New active title",
+      herdrTabTitle: "New active title",
+      herdrTitle: "New active title",
+      promptHash: "new-hash",
+      sessionKey: "codex:herdr:codex:id:thread-new",
+    },
+    stateDir,
+  });
+  const activePane = codexPane("New active title", "New active title");
+  activePane.agent_session.value = "thread-new";
+  const forbidden = async () => {
+    assert.fail("a stale release must not clear or regenerate the replacement session");
+  };
+
+  const result = await runAutoTitle({
+    deps: {
+      clearPaneTitle: forbidden,
+      generateTitle: forbidden,
+      locateSessionFile: forbidden,
+      readCodexThreadTitle: forbidden,
+      readPane: async () => activePane,
+      syncCodexThreadTitle: forbidden,
+      writePaneTitle: forbidden,
+    },
+    env: releasedEnv(),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "unchanged", title: "New active title" });
+  const state = await readPaneState({ paneId: "w1:p1", stateDir });
+  assert.equal(state.sessionKey, "codex:herdr:codex:id:thread-new");
+  assert.equal(state.codexOwnedTitle, "New active title");
+});
+
 test("pane focus adopts the native title after an in-process session switch", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-session-switch-"));
   await writePaneState({
     paneId: "w1:p1",
     state: {
+      codexOwnedTitle: "Old title",
       codexTitle: "Old title",
       herdrPaneTitle: "Old title",
       herdrTabTitle: "Old title",
@@ -981,6 +1068,7 @@ test("forced refresh retains confirmed Codex ownership after a sync failure", as
   await writePaneState({
     paneId: "w1:p1",
     state: {
+      codexOwnedTitle: "Old title",
       codexTitle: "Old title",
       herdrPaneTitle: "Old title",
       herdrTabTitle: "Old title",

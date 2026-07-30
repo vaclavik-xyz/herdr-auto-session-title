@@ -96,10 +96,10 @@ The action is also available through Herdr's plugin action UI.
   recursive integration behavior and leaking Herdr invocation context.
 - Plugin state stores titles, a prompt hash, and session identifiers under
   `HERDR_PLUGIN_STATE_DIR`; it does not store prompt text.
-- Per-pane locks suppress duplicate concurrent generation. Manual Herdr and
-  native Codex titles are never overwritten after they diverge from the
-  plugin-owned value. Partial exit cleanup is retried on a later pane focus or
-  agent lifecycle event.
+- Per-pane locks suppress duplicate concurrent generation. Ownership checks
+  protect manual Herdr and native Codex titles after they diverge from the
+  plugin-owned value, subject to the tab rename limitation below. Partial exit
+  cleanup is retried on a later pane focus or agent lifecycle event.
 
 Herdr 0.7.5 does not expose an atomic conditional tab rename. The plugin checks
 the current tab label immediately before renaming it, but a manual rename that

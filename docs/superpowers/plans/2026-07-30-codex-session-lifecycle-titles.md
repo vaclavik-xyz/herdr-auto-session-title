@@ -255,14 +255,17 @@ git commit -m "docs: describe Codex title lifecycle sync"
 
 - [x] Separate the last observed Codex title (`codexTitle`) from the title
   confirmed as plugin-written (`codexOwnedTitle`). New state records an explicit
-  `null` owner when adopting a pre-existing native title; legacy state without
-  the new field retains its earlier ownership interpretation.
+  `null` owner when adopting a pre-existing native title; ambiguous legacy state
+  without the new field is conservatively treated as unowned.
 - [x] After release cleanup, always reread the pane and synchronize any live
   replacement session, including when the release event itself was delayed.
 - [x] Prefer `thread/read` for every non-forced, different Codex session,
   including `pane.agent_status_changed` as the first switch event.
 - [x] Add RED/GREEN regressions for adopted-title refresh, delayed release, and
   status-first session switching.
+- [x] Correlate delayed releases with the live pane session so an already
+  synchronized replacement is not cleared, and cover the legacy ownership
+  migration and stale-release paths with RED/GREEN regressions.
 - [x] Run final syntax, full-suite, whitespace, and Herdr link verification.
 
 Herdr 0.7.5 exposes separate tab-read and tab-rename commands, with no atomic

@@ -65,7 +65,14 @@ export async function runAutoTitle({
       const releaseRequested =
         isCodexReleaseEvent(event, previous) ||
         shouldRecoverMissedCodexRelease(event, pane, previous);
-      if (releaseRequested || previous?.releasePending) {
+      const staleReleaseForCurrentSession =
+        releaseRequested &&
+        !previous?.releasePending &&
+        paneSessionKey(pane) === previous?.sessionKey;
+      if (
+        (releaseRequested || previous?.releasePending) &&
+        !staleReleaseForCurrentSession
+      ) {
         const releaseResult = await clearReleasedPresentation({
           deps,
           env,
@@ -112,7 +119,7 @@ export async function runAutoTitle({
         return { status: "preserved", title: manualTitle };
       }
 
-      const sessionKey = [agent, session.source, session.kind, session.value].join(":");
+      const sessionKey = paneSessionKey(pane);
       const sameSession = previous?.sessionKey === sessionKey;
       const force = env.HERDR_PLUGIN_ACTION_ID === "refresh";
       if (
@@ -383,6 +390,14 @@ function defaultSessionRoots(env) {
   };
 }
 
+function paneSessionKey(pane) {
+  const session = pane.agent_session;
+  if (!session?.value) return null;
+  const agent = String(session.agent || pane.agent || "").trim().toLowerCase();
+  if (!agent) return null;
+  return [agent, session.source, session.kind, session.value].join(":");
+}
+
 async function waitForAgentSession({
   attempts,
   deps,
@@ -458,7 +473,7 @@ function confirmedCodexOwnedTitle(state) {
   if (Object.prototype.hasOwnProperty.call(state, "codexOwnedTitle")) {
     return state.codexOwnedTitle ?? null;
   }
-  return state.codexTitle ?? null;
+  return null;
 }
 
 function parseJson(value) {
