@@ -34,13 +34,14 @@ refresh action when you explicitly want to regenerate the current title.
 | Claude Code | Yes | No |
 | Other agents | Ignored | No |
 
-Manual titles win. The plugin only replaces a Herdr pane title, tab label, or
-Codex title when it is empty, still has its numeric default, or still equals
-the last title written by this plugin. If a Codex thread already has a native
-title, that title is adopted as the Herdr title so the surfaces remain
+Manual titles win, subject to the non-atomic tab rename limitation documented
+under Privacy and safety. The plugin only replaces a Herdr pane title, tab
+label, or Codex title when it is empty, still has its numeric default, or still
+equals the last title written by this plugin. If a Codex thread already has a
+native title, that title is adopted as the Herdr title so the surfaces remain
 synchronized without claiming ownership of the native title. On Codex exit,
-cleanup is subject to the same ownership rule: a manually renamed tab is
-preserved. If a delayed exit event arrives after another session is already
+cleanup uses the same ownership check and preserves a manual tab label it
+observes. If a delayed exit event arrives after another session is already
 active, cleanup finishes first and the new session is synchronized immediately.
 
 ## Requirements
