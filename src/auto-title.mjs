@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { syncCodexThreadTitle } from "./codex-rpc.mjs";
+import { readCodexThreadTitle, syncCodexThreadTitle } from "./codex-rpc.mjs";
 import { generateTitle } from "./generator.mjs";
 import { readPane, writePaneTitle } from "./herdr.mjs";
 import { extractSessionPrompt, locateSessionFile } from "./session.mjs";
@@ -16,7 +16,9 @@ const defaultDependencies = {
   extractSessionPrompt,
   generateTitle,
   locateSessionFile,
+  readCodexThreadTitle,
   readPane,
+  sleep,
   syncCodexThreadTitle,
   writePaneTitle,
 };
@@ -37,6 +39,8 @@ export async function runAutoTitle({
   herdrBin = env.HERDR_BIN_PATH || "herdr",
   model = null,
   pluginRoot = path.join(moduleDirectory, ".."),
+  sessionPollAttempts = 20,
+  sessionPollIntervalMs = 100,
   sessionRoots = defaultSessionRoots(env),
   stateDir = env.HERDR_PLUGIN_STATE_DIR || path.join(os.tmpdir(), "herdr-auto-session-title"),
 } = {}) {
@@ -48,7 +52,18 @@ export async function runAutoTitle({
 
   try {
     return await withPaneLock({ paneId, stateDir }, async () => {
-      const pane = await deps.readPane({ env, herdrBin, paneId });
+      let pane = await deps.readPane({ env, herdrBin, paneId });
+      if (shouldWaitForCodexSession(event, pane)) {
+        pane = await waitForAgentSession({
+          attempts: sessionPollAttempts,
+          deps,
+          env,
+          herdrBin,
+          intervalMs: sessionPollIntervalMs,
+          pane,
+          paneId,
+        });
+      }
       const session = pane.agent_session;
       const agent = String(session?.agent || pane.agent || "").trim().toLowerCase();
       if (!session?.value || (agent !== "codex" && agent !== "claude")) {
@@ -94,51 +109,66 @@ export async function runAutoTitle({
         });
       }
 
-      const sessionPath =
-        session.kind === "path"
-          ? session.value
-          : await deps.locateSessionFile({
-              agent,
-              roots: sessionRoots,
-              sessionId: session.value,
-            });
-      if (!sessionPath) return { status: "pending", reason: "session-file-not-found" };
-      const prompt = await deps.extractSessionPrompt({ agent, sessionPath });
-      if (!prompt) return { status: "pending", reason: "prompt-not-found" };
-
-      let generated;
-      try {
-        generated = await deps.generateTitle({
-          codexBin,
-          cwd: pane.foreground_cwd || pane.cwd || pluginRoot,
-          env,
-          model,
-          pluginRoot,
-          prompt,
-          stateDir,
-        });
-      } catch {
-        generated = {
-          title: sanitizeTitle(prompt, 36),
-          description: sanitizeDescription(prompt, 100),
-        };
-      }
-      if (!generated?.title) return { status: "pending", reason: "empty-title" };
-
-      let resolvedTitle = generated.title;
+      let prompt = null;
+      let generated = null;
+      let resolvedTitle = null;
       let codexTitle = sameSession ? previous?.codexTitle || null : null;
-      if (agent === "codex") {
+      if (shouldPreferNativeCodexTitle({ agent, event, force, sameSession })) {
         try {
-          const synced = await deps.syncCodexThreadTitle({
+          resolvedTitle = await deps.readCodexThreadTitle({
             codexBin,
             env,
-            previousPluginTitle: sameSession ? previous?.codexTitle : null,
             threadId: session.value,
-            title: generated.title,
           });
-          resolvedTitle = synced.title;
-          codexTitle = synced.title;
+          codexTitle = resolvedTitle;
         } catch {}
+      }
+
+      if (!resolvedTitle) {
+        const sessionPath =
+          session.kind === "path"
+            ? session.value
+            : await deps.locateSessionFile({
+                agent,
+                roots: sessionRoots,
+                sessionId: session.value,
+              });
+        if (!sessionPath) return { status: "pending", reason: "session-file-not-found" };
+        prompt = await deps.extractSessionPrompt({ agent, sessionPath });
+        if (!prompt) return { status: "pending", reason: "prompt-not-found" };
+
+        try {
+          generated = await deps.generateTitle({
+            codexBin,
+            cwd: pane.foreground_cwd || pane.cwd || pluginRoot,
+            env,
+            model,
+            pluginRoot,
+            prompt,
+            stateDir,
+          });
+        } catch {
+          generated = {
+            title: sanitizeTitle(prompt, 36),
+            description: sanitizeDescription(prompt, 100),
+          };
+        }
+        if (!generated?.title) return { status: "pending", reason: "empty-title" };
+        resolvedTitle = generated.title;
+
+        if (agent === "codex") {
+          try {
+            const synced = await deps.syncCodexThreadTitle({
+              codexBin,
+              env,
+              previousPluginTitle: sameSession ? previous?.codexTitle : null,
+              threadId: session.value,
+              title: generated.title,
+            });
+            resolvedTitle = synced.title;
+            codexTitle = synced.title;
+          } catch {}
+        }
       }
 
       const stagedState = {
@@ -148,7 +178,7 @@ export async function runAutoTitle({
         herdrTabTitle: confirmedTabTitle(previous),
         herdrTitle: previous?.herdrTitle || null,
         pendingHerdrTitle: resolvedTitle,
-        promptHash: hash(prompt),
+        promptHash: prompt ? hash(prompt) : null,
         sessionKey,
       };
       await writePaneState({ paneId, state: stagedState, stateDir });
@@ -284,6 +314,45 @@ function defaultSessionRoots(env) {
     claude: path.join(userHomeDirectory, ".claude", "projects"),
     codex: path.join(codexHomeDirectory, "sessions"),
   };
+}
+
+async function waitForAgentSession({
+  attempts,
+  deps,
+  env,
+  herdrBin,
+  intervalMs,
+  pane,
+  paneId,
+}) {
+  let current = pane;
+  for (let attempt = 0; attempt < attempts && !current.agent_session?.value; attempt += 1) {
+    await deps.sleep(intervalMs);
+    current = await deps.readPane({ env, herdrBin, paneId });
+  }
+  return current;
+}
+
+function shouldPreferNativeCodexTitle({ agent, event, force, sameSession }) {
+  return (
+    agent === "codex" &&
+    !force &&
+    !sameSession &&
+    (event?.event === "pane.agent_detected" || event?.event === "pane.focused")
+  );
+}
+
+function shouldWaitForCodexSession(event, pane) {
+  return (
+    !pane.agent_session?.value &&
+    event?.event === "pane.agent_detected" &&
+    event?.data?.agent === "codex" &&
+    event?.data?.released !== true
+  );
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function hash(value) {

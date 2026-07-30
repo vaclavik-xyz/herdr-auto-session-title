@@ -51,6 +51,17 @@ function invocationEnv(overrides = {}) {
   };
 }
 
+function detectionEnv(overrides = {}) {
+  return invocationEnv({
+    HERDR_PLUGIN_EVENT: "pane.agent_detected",
+    HERDR_PLUGIN_EVENT_JSON: JSON.stringify({
+      event: "pane.agent_detected",
+      data: { agent: "codex", pane_id: "w1:p1" },
+    }),
+    ...overrides,
+  });
+}
+
 test("event filtering accepts useful lifecycle changes and manual refresh", () => {
   assert.equal(shouldHandleInvocation(invocationEnv()), true);
   assert.equal(
@@ -101,6 +112,54 @@ test("first Codex event generates once, syncs native title, and suppresses dupli
   assert.equal(generationCount, 1);
   assert.equal(codexSyncCount, 1);
   assert.equal(paneTitle, "Fix checkout race");
+});
+
+test("Codex detection waits for a resumed session and adopts its native title", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-resume-"));
+  const resumedPane = codexPane();
+  resumedPane.agent_session.value = "thread-resumed";
+  let readCount = 0;
+  let writtenTitle = null;
+  let readThreadId = null;
+  const forbidden = async () => {
+    assert.fail("a native resumed title must skip prompt generation");
+  };
+
+  const result = await runAutoTitle({
+    deps: {
+      extractSessionPrompt: forbidden,
+      generateTitle: forbidden,
+      locateSessionFile: forbidden,
+      readCodexThreadTitle: async ({ threadId }) => {
+        readThreadId = threadId;
+        return "Native resumed title";
+      },
+      readPane: async () => {
+        readCount += 1;
+        if (readCount === 1) {
+          const detectedPane = codexPane();
+          delete detectedPane.agent_session;
+          return detectedPane;
+        }
+        return resumedPane;
+      },
+      sleep: async () => undefined,
+      syncCodexThreadTitle: forbidden,
+      writePaneTitle: async ({ title }) => {
+        writtenTitle = title;
+        return { status: "updated", title };
+      },
+    },
+    env: detectionEnv(),
+    sessionPollAttempts: 1,
+    sessionPollIntervalMs: 0,
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "updated", title: "Native resumed title" });
+  assert.equal(readCount, 2);
+  assert.equal(readThreadId, "thread-resumed");
+  assert.equal(writtenTitle, "Native resumed title");
 });
 
 test("a pre-existing Herdr title is treated as a manual override", async () => {

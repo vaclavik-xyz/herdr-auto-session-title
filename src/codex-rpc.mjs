@@ -4,6 +4,22 @@ import readline from "node:readline";
 
 import { isolatedChildEnv } from "./process-env.mjs";
 
+export async function readCodexThreadTitle({
+  codexBin = "codex",
+  env = process.env,
+  threadId,
+  timeoutMs = 15_000,
+}) {
+  const client = createStdioClient({ codexBin, env, timeoutMs });
+  try {
+    await client.initialize();
+    const response = await client.call("thread/read", { threadId });
+    return response?.thread?.name?.trim() || null;
+  } finally {
+    await client.close();
+  }
+}
+
 export async function syncCodexThreadTitle({
   codexBin = "codex",
   env = process.env,

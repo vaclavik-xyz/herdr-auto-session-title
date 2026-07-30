@@ -5,7 +5,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { syncCodexThreadTitle } from "../src/codex-rpc.mjs";
+import * as codexRpc from "../src/codex-rpc.mjs";
+
+const { syncCodexThreadTitle } = codexRpc;
 
 const pluginRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fakeServer = path.join(pluginRoot, "test-support", "fake-codex-app-server.mjs");
@@ -65,4 +67,33 @@ test("Codex sync replaces the plugin's previous native title", async () => {
 
   assert.equal(result.status, "updated");
   assert.equal(messages.at(-1).method, "thread/name/set");
+});
+
+test("Codex title lookup reads a native thread name without renaming it", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-rpc-read-"));
+  const recordPath = path.join(tempDir, "record.jsonl");
+  await chmod(fakeServer, 0o755);
+
+  assert.equal(typeof codexRpc.readCodexThreadTitle, "function");
+  const title = await codexRpc.readCodexThreadTitle({
+    codexBin: fakeServer,
+    env: {
+      ...process.env,
+      FAKE_CODEX_RPC_RECORD: recordPath,
+      FAKE_CODEX_THREAD_NAME: "Native resumed title",
+      HERDR_PANE_ID: "must-not-leak",
+    },
+    threadId: "thread-resumed",
+  });
+  const messages = (await readFile(recordPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+
+  assert.equal(title, "Native resumed title");
+  assert.deepEqual(
+    messages.map((message) => message.method),
+    ["initialize", "initialized", "thread/read"],
+  );
+  assert.deepEqual(messages.at(-1).params, { threadId: "thread-resumed" });
 });
