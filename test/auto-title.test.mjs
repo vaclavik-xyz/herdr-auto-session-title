@@ -62,8 +62,44 @@ function detectionEnv(overrides = {}) {
   });
 }
 
+function releasedEnv(overrides = {}) {
+  return invocationEnv({
+    HERDR_PLUGIN_EVENT: "pane.agent_detected",
+    HERDR_PLUGIN_EVENT_JSON: JSON.stringify({
+      event: "pane.agent_detected",
+      data: {
+        agent: null,
+        final_status: "idle",
+        pane_id: "w1:p1",
+        released: true,
+      },
+    }),
+    ...overrides,
+  });
+}
+
+function focusedEnv(overrides = {}) {
+  return invocationEnv({
+    HERDR_PLUGIN_EVENT: "pane.focused",
+    HERDR_PLUGIN_EVENT_JSON: JSON.stringify({
+      event: "pane.focused",
+      data: { pane_id: "w1:p1", workspace_id: "w1" },
+    }),
+    ...overrides,
+  });
+}
+
+function releasedPane(tabLabel = "Owned title") {
+  const pane = codexPane(null, tabLabel);
+  pane.agent = null;
+  pane.agent_status = "unknown";
+  delete pane.agent_session;
+  return pane;
+}
+
 test("event filtering accepts useful lifecycle changes and manual refresh", () => {
   assert.equal(shouldHandleInvocation(invocationEnv()), true);
+  assert.equal(shouldHandleInvocation(focusedEnv()), true);
   assert.equal(
     shouldHandleInvocation(
       invocationEnv({
@@ -160,6 +196,183 @@ test("Codex detection waits for a resumed session and adopts its native title", 
   assert.equal(readCount, 2);
   assert.equal(readThreadId, "thread-resumed");
   assert.equal(writtenTitle, "Native resumed title");
+});
+
+test("a released Codex session clears owned pane and tab presentation", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-release-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexTitle: "Owned title",
+      herdrPaneTitle: "Owned title",
+      herdrTabTitle: "Owned title",
+      herdrTitle: "Owned title",
+      promptHash: "existing-hash",
+      sessionKey: "codex:herdr:codex:id:thread-123",
+    },
+    stateDir,
+  });
+  let clearInput = null;
+
+  const result = await runAutoTitle({
+    deps: {
+      clearPaneTitle: async (input) => {
+        clearInput = input;
+        await input.onPaneTitleCleared?.();
+        await input.onTabTitleCleared?.();
+        return { status: "updated" };
+      },
+      readPane: async () => releasedPane(),
+    },
+    env: releasedEnv(),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "cleared" });
+  assert.equal(clearInput.previousPluginTitle, "Owned title");
+  assert.equal(clearInput.tabId, "w1:t1");
+  assert.equal(await readPaneState({ paneId: "w1:p1", stateDir }), null);
+});
+
+test("partial release cleanup is retried on a later pane focus", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-release-retry-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexTitle: "Owned title",
+      herdrPaneTitle: "Owned title",
+      herdrTabTitle: "Owned title",
+      herdrTitle: "Owned title",
+      promptHash: "existing-hash",
+      sessionKey: "codex:herdr:codex:id:thread-123",
+    },
+    stateDir,
+  });
+  let clearAttempt = 0;
+  const deps = {
+    clearPaneTitle: async (input) => {
+      clearAttempt += 1;
+      await input.onPaneTitleCleared?.();
+      if (clearAttempt === 1) throw new Error("tab reset failed");
+      await input.onTabTitleCleared?.();
+      return { status: "updated" };
+    },
+    readPane: async () => releasedPane(),
+  };
+
+  await assert.rejects(
+    runAutoTitle({ deps, env: releasedEnv(), stateDir }),
+    /tab reset failed/,
+  );
+  const pending = await readPaneState({ paneId: "w1:p1", stateDir });
+  assert.equal(pending.releasePending, true);
+  assert.equal(pending.herdrPaneTitle, null);
+  assert.equal(pending.herdrTabTitle, "Owned title");
+
+  const retried = await runAutoTitle({ deps, env: focusedEnv(), stateDir });
+
+  assert.deepEqual(retried, { status: "cleared" });
+  assert.equal(clearAttempt, 2);
+  assert.equal(await readPaneState({ paneId: "w1:p1", stateDir }), null);
+});
+
+test("release retry rereads the pane before synchronizing a newly resumed session", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-release-new-session-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexTitle: "Old title",
+      herdrPaneTitle: null,
+      herdrTabTitle: "Old title",
+      herdrTitle: "Old title",
+      promptHash: "old-hash",
+      releasePending: true,
+      releaseTabTitle: "Old title",
+      sessionKey: "codex:herdr:codex:id:thread-old",
+    },
+    stateDir,
+  });
+  let paneTitle = "Old title";
+  let tabTitle = "Old title";
+  let readCount = 0;
+  let writtenTitle = null;
+
+  const result = await runAutoTitle({
+    deps: {
+      clearPaneTitle: async (input) => {
+        paneTitle = null;
+        tabTitle = "1";
+        await input.onPaneTitleCleared?.();
+        await input.onTabTitleCleared?.();
+        return { status: "updated" };
+      },
+      readCodexThreadTitle: async () => "Resumed title",
+      readPane: async () => {
+        readCount += 1;
+        const pane = codexPane(paneTitle, tabTitle);
+        pane.agent_session.value = "thread-new";
+        return pane;
+      },
+      writePaneTitle: async ({ title }) => {
+        writtenTitle = title;
+        return { status: "updated", title };
+      },
+    },
+    env: focusedEnv(),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "updated", title: "Resumed title" });
+  assert.equal(readCount, 2);
+  assert.equal(writtenTitle, "Resumed title");
+});
+
+test("pane focus adopts the native title after an in-process session switch", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-session-switch-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexTitle: "Old title",
+      herdrPaneTitle: "Old title",
+      herdrTabTitle: "Old title",
+      herdrTitle: "Old title",
+      promptHash: "old-hash",
+      sessionKey: "codex:herdr:codex:id:thread-old",
+    },
+    stateDir,
+  });
+  const switchedPane = codexPane("Old title", "Old title");
+  switchedPane.agent_session.value = "thread-new";
+  let writtenTitle = null;
+  const forbidden = async () => {
+    assert.fail("a switched native session title must skip generation");
+  };
+
+  const result = await runAutoTitle({
+    deps: {
+      extractSessionPrompt: forbidden,
+      generateTitle: forbidden,
+      locateSessionFile: forbidden,
+      readCodexThreadTitle: async ({ threadId }) => {
+        assert.equal(threadId, "thread-new");
+        return "New native title";
+      },
+      readPane: async () => switchedPane,
+      syncCodexThreadTitle: forbidden,
+      writePaneTitle: async ({ title }) => {
+        writtenTitle = title;
+        return { status: "updated", title };
+      },
+    },
+    env: focusedEnv(),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "updated", title: "New native title" });
+  assert.equal(writtenTitle, "New native title");
+  const state = await readPaneState({ paneId: "w1:p1", stateDir });
+  assert.equal(state.sessionKey, "codex:herdr:codex:id:thread-new");
+  assert.equal(state.codexTitle, "New native title");
 });
 
 test("a pre-existing Herdr title is treated as a manual override", async () => {

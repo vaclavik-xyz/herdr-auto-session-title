@@ -79,6 +79,55 @@ export async function writePaneTitle({
   return { status: "updated", title };
 }
 
+export async function clearPaneTitle({
+  env = process.env,
+  herdrBin = env.HERDR_BIN_PATH || "herdr",
+  onPaneTitleCleared = null,
+  onTabTitleCleared = null,
+  paneId,
+  previousPluginTitle = null,
+  source = "plugin:auto-session-title",
+  tabId = null,
+  timeoutMs = 10_000,
+}) {
+  await runHerdrJson({
+    args: ["pane", "report-metadata", paneId, "--source", source, "--clear-title"],
+    env,
+    herdrBin,
+    timeoutMs,
+  });
+  await onPaneTitleCleared?.();
+  if (!tabId) return { status: "updated" };
+
+  const response = await runHerdrJson({
+    args: ["tab", "get", tabId],
+    env,
+    herdrBin,
+    timeoutMs,
+  });
+  const tab = response?.result?.tab;
+  if (!tab?.tab_id) throw new Error(`Herdr did not return tab ${tabId}`);
+  const tabLabel = tab.label?.trim() || null;
+  const defaultTabTitle = tab.number == null ? null : String(tab.number);
+  if (!tabLabel || tabLabel === defaultTabTitle) {
+    await onTabTitleCleared?.();
+    return { status: "updated" };
+  }
+  if (!previousPluginTitle || tabLabel !== previousPluginTitle) {
+    return { status: "preserved", title: tabLabel };
+  }
+  if (!defaultTabTitle) return { status: "preserved", title: tabLabel };
+
+  await runHerdrJson({
+    args: ["tab", "rename", tabId, defaultTabTitle],
+    env,
+    herdrBin,
+    timeoutMs,
+  });
+  await onTabTitleCleared?.();
+  return { status: "updated" };
+}
+
 async function runHerdrJson({ args, env, herdrBin, timeoutMs }) {
   const { stdout } = await execFileAsync(herdrBin, args, {
     encoding: "utf8",

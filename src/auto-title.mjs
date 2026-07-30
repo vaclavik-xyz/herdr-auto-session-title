@@ -7,12 +7,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { readCodexThreadTitle, syncCodexThreadTitle } from "./codex-rpc.mjs";
 import { generateTitle } from "./generator.mjs";
-import { readPane, writePaneTitle } from "./herdr.mjs";
+import { clearPaneTitle, readPane, writePaneTitle } from "./herdr.mjs";
 import { extractSessionPrompt, locateSessionFile } from "./session.mjs";
-import { LockBusyError, readPaneState, withPaneLock, writePaneState } from "./state.mjs";
+import {
+  LockBusyError,
+  readPaneState,
+  removePaneState,
+  withPaneLock,
+  writePaneState,
+} from "./state.mjs";
 import { sanitizeDescription, sanitizeTitle } from "./title.mjs";
 
 const defaultDependencies = {
+  clearPaneTitle,
   extractSessionPrompt,
   generateTitle,
   locateSessionFile,
@@ -27,6 +34,7 @@ const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 export function shouldHandleInvocation(env) {
   if (env.HERDR_PLUGIN_ACTION_ID === "refresh") return Boolean(env.HERDR_PANE_ID);
   if (env.HERDR_PLUGIN_EVENT === "pane.agent_detected") return true;
+  if (env.HERDR_PLUGIN_EVENT === "pane.focused") return true;
   if (env.HERDR_PLUGIN_EVENT !== "pane.agent_status_changed") return false;
   const event = parseJson(env.HERDR_PLUGIN_EVENT_JSON);
   return event?.data?.agent_status === "working" || event?.data?.agent_status === "idle";
@@ -52,7 +60,24 @@ export async function runAutoTitle({
 
   try {
     return await withPaneLock({ paneId, stateDir }, async () => {
+      let previous = await readPaneState({ paneId, stateDir });
       let pane = await deps.readPane({ env, herdrBin, paneId });
+      const releaseRequested = isCodexReleaseEvent(event, previous);
+      if (releaseRequested || previous?.releasePending) {
+        const activeSessionDuringCleanup = Boolean(pane.agent_session?.value);
+        const releaseResult = await clearReleasedPresentation({
+          deps,
+          env,
+          herdrBin,
+          pane,
+          paneId,
+          previous,
+          stateDir,
+        });
+        previous = null;
+        if (releaseRequested || !activeSessionDuringCleanup) return releaseResult;
+        pane = await deps.readPane({ env, herdrBin, paneId });
+      }
       if (shouldWaitForCodexSession(event, pane)) {
         pane = await waitForAgentSession({
           attempts: sessionPollAttempts,
@@ -70,7 +95,6 @@ export async function runAutoTitle({
         return { status: "unsupported" };
       }
 
-      const previous = await readPaneState({ paneId, stateDir });
       const currentPaneTitle = pane.title?.trim() || null;
       const tabLabel = pane.tab?.label?.trim() || null;
       const defaultTabLabel =
@@ -307,6 +331,41 @@ async function reconcileExistingSession({
   return { status, title: target };
 }
 
+async function clearReleasedPresentation({
+  deps,
+  env,
+  herdrBin,
+  pane,
+  paneId,
+  previous,
+  stateDir,
+}) {
+  if (!previous) return { status: "unchanged" };
+  const stagedState = {
+    ...previous,
+    releasePending: true,
+    releaseTabTitle: previous.releaseTabTitle ?? confirmedTabTitle(previous),
+  };
+  await writePaneState({ paneId, state: stagedState, stateDir });
+  await deps.clearPaneTitle({
+    env,
+    herdrBin,
+    onPaneTitleCleared: async () => {
+      stagedState.herdrPaneTitle = null;
+      await writePaneState({ paneId, state: stagedState, stateDir });
+    },
+    onTabTitleCleared: async () => {
+      stagedState.herdrTabTitle = null;
+      await writePaneState({ paneId, state: stagedState, stateDir });
+    },
+    paneId,
+    previousPluginTitle: stagedState.releaseTabTitle,
+    tabId: pane.tab_id,
+  });
+  await removePaneState({ paneId, stateDir });
+  return { status: "cleared" };
+}
+
 function defaultSessionRoots(env) {
   const userHomeDirectory = os.homedir();
   const codexHomeDirectory = env.CODEX_HOME || path.join(userHomeDirectory, ".codex");
@@ -348,6 +407,14 @@ function shouldWaitForCodexSession(event, pane) {
     event?.event === "pane.agent_detected" &&
     event?.data?.agent === "codex" &&
     event?.data?.released !== true
+  );
+}
+
+function isCodexReleaseEvent(event, state) {
+  return (
+    event?.event === "pane.agent_detected" &&
+    event?.data?.released === true &&
+    (state?.sessionKey?.startsWith("codex:") || state?.releasePending === true)
   );
 }
 

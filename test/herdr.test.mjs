@@ -5,7 +5,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { readPane, writePaneTitle } from "../src/herdr.mjs";
+import * as herdr from "../src/herdr.mjs";
+
+const { readPane, writePaneTitle } = herdr;
 
 const pluginRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fakeHerdr = path.join(pluginRoot, "test-support", "fake-herdr.mjs");
@@ -93,4 +95,77 @@ test("Herdr adapter preserves a tab label changed before rename", async () => {
       ["tab", "get", "w1:t1"],
     ]);
   }
+});
+
+test("Herdr adapter clears plugin metadata and restores its owned tab label", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-herdr-clear-"));
+  const recordPath = path.join(tempDir, "record.jsonl");
+  await chmod(fakeHerdr, 0o755);
+
+  assert.equal(typeof herdr.clearPaneTitle, "function");
+  const result = await herdr.clearPaneTitle({
+    env: {
+      ...process.env,
+      FAKE_HERDR_RECORD: recordPath,
+      FAKE_HERDR_TAB_LABEL: "Owned title",
+    },
+    herdrBin: fakeHerdr,
+    paneId: "w1:p7",
+    previousPluginTitle: "Owned title",
+    tabId: "w1:t1",
+  });
+  const calls = (await readFile(recordPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+
+  assert.deepEqual(result, { status: "updated" });
+  assert.deepEqual(calls, [
+    [
+      "pane",
+      "report-metadata",
+      "w1:p7",
+      "--source",
+      "plugin:auto-session-title",
+      "--clear-title",
+    ],
+    ["tab", "get", "w1:t1"],
+    ["tab", "rename", "w1:t1", "1"],
+  ]);
+});
+
+test("Herdr adapter preserves a manual tab label while clearing plugin metadata", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-herdr-clear-manual-"));
+  const recordPath = path.join(tempDir, "record.jsonl");
+  await chmod(fakeHerdr, 0o755);
+
+  assert.equal(typeof herdr.clearPaneTitle, "function");
+  const result = await herdr.clearPaneTitle({
+    env: {
+      ...process.env,
+      FAKE_HERDR_RECORD: recordPath,
+      FAKE_HERDR_TAB_LABEL: "Manual title",
+    },
+    herdrBin: fakeHerdr,
+    paneId: "w1:p7",
+    previousPluginTitle: "Owned title",
+    tabId: "w1:t1",
+  });
+  const calls = (await readFile(recordPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+
+  assert.deepEqual(result, { status: "preserved", title: "Manual title" });
+  assert.deepEqual(calls, [
+    [
+      "pane",
+      "report-metadata",
+      "w1:p7",
+      "--source",
+      "plugin:auto-session-title",
+      "--clear-title",
+    ],
+    ["tab", "get", "w1:t1"],
+  ]);
 });

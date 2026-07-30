@@ -26,6 +26,14 @@ export async function writePaneState({ paneId, state, stateDir }) {
   await rename(temporary, target);
 }
 
+export async function removePaneState({ paneId, stateDir }) {
+  try {
+    await unlink(statePath(stateDir, paneId));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
 export async function withPaneLock(
   { paneId, staleMs = 120_000, stateDir },
   operation,
