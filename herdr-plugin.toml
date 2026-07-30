@@ -1,0 +1,20 @@
+id = "zhangzujian.auto-session-title"
+name = "Auto Session Title"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Generate concise pane titles and synchronize native Codex thread names."
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "refresh"
+title = "Refresh session title"
+contexts = ["pane"]
+command = ["node", "src/auto-title.mjs"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["node", "src/auto-title.mjs"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["node", "src/auto-title.mjs"]

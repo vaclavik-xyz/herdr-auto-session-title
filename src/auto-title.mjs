@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { syncCodexThreadTitle } from "./codex-rpc.mjs";
 import { generateTitle } from "./generator.mjs";
@@ -20,6 +20,7 @@ const defaultDependencies = {
   syncCodexThreadTitle,
   writePaneTitle,
 };
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 export function shouldHandleInvocation(env) {
   if (env.HERDR_PLUGIN_ACTION_ID === "refresh") return Boolean(env.HERDR_PANE_ID);
@@ -35,7 +36,7 @@ export async function runAutoTitle({
   env = process.env,
   herdrBin = env.HERDR_BIN_PATH || "herdr",
   model = null,
-  pluginRoot = path.join(import.meta.dirname, ".."),
+  pluginRoot = path.join(moduleDirectory, ".."),
   sessionRoots = defaultSessionRoots(env),
   stateDir = env.HERDR_PLUGIN_STATE_DIR || path.join(os.tmpdir(), "herdr-auto-session-title"),
 } = {}) {

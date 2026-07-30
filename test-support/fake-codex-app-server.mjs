@@ -11,8 +11,10 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   let result = {};
   if (message.method === "thread/read") {
     result = {
-      id: message.params.threadId,
-      name: process.env.FAKE_CODEX_THREAD_NAME || null,
+      thread: {
+        id: message.params.threadId,
+        name: process.env.FAKE_CODEX_THREAD_NAME || null,
+      },
     };
   }
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n`);

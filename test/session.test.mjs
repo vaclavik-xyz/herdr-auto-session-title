@@ -3,13 +3,14 @@ import { mkdtemp, mkdir, copyFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   extractSessionPrompt,
   locateSessionFile,
 } from "../src/session.mjs";
 
-const fixtures = path.join(import.meta.dirname, "fixtures");
+const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
 test("extractSessionPrompt returns the first usable Codex user request", async () => {
   const prompt = await extractSessionPrompt({

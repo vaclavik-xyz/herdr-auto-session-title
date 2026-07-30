@@ -15,8 +15,8 @@ export async function syncCodexThreadTitle({
   const client = createStdioClient({ codexBin, env, timeoutMs });
   try {
     await client.initialize();
-    const thread = await client.call("thread/read", { threadId });
-    const currentTitle = thread?.name?.trim() || null;
+    const response = await client.call("thread/read", { threadId });
+    const currentTitle = response?.thread?.name?.trim() || null;
     if (currentTitle && currentTitle !== previousPluginTitle) {
       return { status: "preserved", title: currentTitle };
     }

@@ -1,8 +1,14 @@
 {
   "name": "herdr-auto-session-title",
   "version": "0.1.0",
+  "description": "Generate concise Herdr pane titles and synchronize native Codex thread names.",
   "private": true,
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhangzujian/herdr-auto-session-title.git"
+  },
   "engines": {
     "node": ">=20"
   },

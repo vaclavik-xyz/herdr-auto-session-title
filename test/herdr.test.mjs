@@ -3,10 +3,11 @@ import { chmod, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { readPane, writePaneTitle } from "../src/herdr.mjs";
 
-const pluginRoot = path.join(import.meta.dirname, "..");
+const pluginRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fakeHerdr = path.join(pluginRoot, "test-support", "fake-herdr.mjs");
 
 test("Herdr adapter reads a pane and writes argv-safe targeted metadata", async () => {

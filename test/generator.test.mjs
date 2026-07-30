@@ -3,10 +3,11 @@ import { access, chmod, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { generateTitle } from "../src/generator.mjs";
 
-const pluginRoot = path.join(import.meta.dirname, "..");
+const pluginRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fakeCodex = path.join(pluginRoot, "test-support", "fake-codex-generator.mjs");
 
 test("generateTitle runs an isolated ephemeral structured Codex turn", async () => {

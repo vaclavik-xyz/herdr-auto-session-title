@@ -3,10 +3,11 @@ import { chmod, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { syncCodexThreadTitle } from "../src/codex-rpc.mjs";
 
-const pluginRoot = path.join(import.meta.dirname, "..");
+const pluginRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fakeServer = path.join(pluginRoot, "test-support", "fake-codex-app-server.mjs");
 
 async function runSync({ nativeTitle = "", previousPluginTitle = null } = {}) {

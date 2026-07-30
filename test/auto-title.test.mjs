@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { runAutoTitle, shouldHandleInvocation } from "../src/auto-title.mjs";
 import { readPaneState } from "../src/state.mjs";
 
-const fixtureSession = path.join(
-  import.meta.dirname,
-  "fixtures",
-  "codex-session.jsonl",
-);
+const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+const fixtureSession = path.join(testDirectory, "fixtures", "codex-session.jsonl");
+const pluginRoot = path.join(testDirectory, "..");
+const fakeCodex = path.join(pluginRoot, "test-support", "fake-codex.mjs");
+const fakeHerdr = path.join(pluginRoot, "test-support", "fake-herdr.mjs");
 
 function codexPane(title = null) {
   return {
@@ -181,4 +182,46 @@ test("manual refresh replaces only titles previously owned by the plugin", async
   assert.equal(result.status, "updated");
   assert.equal(previousPluginTitle, "First title");
   assert.equal(paneTitle, "Refreshed title");
+});
+
+test("manual refresh crosses the real session, generator, RPC, and Herdr adapters", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-e2e-"));
+  const sessionRoot = path.join(tempDir, "sessions");
+  const stateDir = path.join(tempDir, "state");
+  const herdrRecord = path.join(tempDir, "herdr.jsonl");
+  const generatorRecord = path.join(tempDir, "generator.json");
+  const rpcRecord = path.join(tempDir, "rpc.jsonl");
+  await mkdir(sessionRoot);
+  await copyFile(fixtureSession, path.join(sessionRoot, "thread-123.jsonl"));
+  await chmod(fakeCodex, 0o755);
+  await chmod(fakeHerdr, 0o755);
+
+  const result = await runAutoTitle({
+    codexBin: fakeCodex,
+    env: {
+      ...process.env,
+      FAKE_CODEX_RECORD: generatorRecord,
+      FAKE_CODEX_RPC_RECORD: rpcRecord,
+      FAKE_HERDR_RECORD: herdrRecord,
+      HERDR_PANE_ID: "w1:p9",
+      HERDR_PLUGIN_ACTION_ID: "refresh",
+    },
+    herdrBin: fakeHerdr,
+    pluginRoot,
+    sessionRoots: { codex: sessionRoot },
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "updated", title: "Fix checkout race" });
+  const herdrCalls = (await readFile(herdrRecord, "utf8"))
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+  assert.deepEqual(herdrCalls.at(-1).slice(-2), ["--title", "Fix checkout race"]);
+  const rpcCalls = (await readFile(rpcRecord, "utf8"))
+    .trim()
+    .split("\n")
+    .map(JSON.parse);
+  assert.equal(rpcCalls.at(-1).method, "thread/name/set");
+  assert.equal(JSON.parse(await readFile(generatorRecord, "utf8")).herdrEnvKeys.length, 0);
 });
