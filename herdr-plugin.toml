@@ -18,3 +18,7 @@ command = ["node", "src/auto-title.mjs"]
 [[events]]
 on = "pane.agent_status_changed"
 command = ["node", "src/auto-title.mjs"]
+
+[[events]]
+on = "pane.focused"
+command = ["node", "src/auto-title.mjs"]

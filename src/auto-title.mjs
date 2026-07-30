@@ -62,7 +62,9 @@ export async function runAutoTitle({
     return await withPaneLock({ paneId, stateDir }, async () => {
       let previous = await readPaneState({ paneId, stateDir });
       let pane = await deps.readPane({ env, herdrBin, paneId });
-      const releaseRequested = isCodexReleaseEvent(event, previous);
+      const releaseRequested =
+        isCodexReleaseEvent(event, previous) ||
+        shouldRecoverMissedCodexRelease(event, pane, previous);
       if (releaseRequested || previous?.releasePending) {
         const activeSessionDuringCleanup = Boolean(pane.agent_session?.value);
         const releaseResult = await clearReleasedPresentation({
@@ -415,6 +417,15 @@ function isCodexReleaseEvent(event, state) {
     event?.event === "pane.agent_detected" &&
     event?.data?.released === true &&
     (state?.sessionKey?.startsWith("codex:") || state?.releasePending === true)
+  );
+}
+
+function shouldRecoverMissedCodexRelease(event, pane, state) {
+  return (
+    event?.event === "pane.focused" &&
+    state?.sessionKey?.startsWith("codex:") &&
+    !pane.agent_session?.value &&
+    !String(pane.agent || "").trim()
   );
 }
 

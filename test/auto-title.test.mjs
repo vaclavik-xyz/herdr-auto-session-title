@@ -276,6 +276,41 @@ test("partial release cleanup is retried on a later pane focus", async () => {
   assert.equal(await readPaneState({ paneId: "w1:p1", stateDir }), null);
 });
 
+test("pane focus recovers a Codex release event skipped while the lock was busy", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-release-missed-"));
+  await writePaneState({
+    paneId: "w1:p1",
+    state: {
+      codexTitle: "Owned title",
+      herdrPaneTitle: "Owned title",
+      herdrTabTitle: "Owned title",
+      herdrTitle: "Owned title",
+      promptHash: "existing-hash",
+      sessionKey: "codex:herdr:codex:id:thread-123",
+    },
+    stateDir,
+  });
+  let clearCount = 0;
+
+  const result = await runAutoTitle({
+    deps: {
+      clearPaneTitle: async (input) => {
+        clearCount += 1;
+        await input.onPaneTitleCleared?.();
+        await input.onTabTitleCleared?.();
+        return { status: "updated" };
+      },
+      readPane: async () => releasedPane(),
+    },
+    env: focusedEnv(),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "cleared" });
+  assert.equal(clearCount, 1);
+  assert.equal(await readPaneState({ paneId: "w1:p1", stateDir }), null);
+});
+
 test("release retry rereads the pane before synchronizing a newly resumed session", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-release-new-session-"));
   await writePaneState({
