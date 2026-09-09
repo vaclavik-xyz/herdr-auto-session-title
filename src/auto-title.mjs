@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readCodexThreadTitle, syncCodexThreadTitle } from "./codex-rpc.mjs";
 import { generateTitle } from "./generator.mjs";
 import { clearPaneTitle, readPane, writePaneTitle } from "./herdr.mjs";
+import { readHermesSessionPrompt } from "./hermes.mjs";
 import { extractSessionPrompt, locateSessionFile } from "./session.mjs";
 import {
   LockBusyError,
@@ -24,6 +25,7 @@ const defaultDependencies = {
   generateTitle,
   locateSessionFile,
   readCodexThreadTitle,
+  readHermesSessionPrompt,
   readPane,
   sleep,
   syncCodexThreadTitle,
@@ -45,6 +47,7 @@ export async function runAutoTitle({
   deps: dependencyOverrides = {},
   env = process.env,
   herdrBin = env.HERDR_BIN_PATH || "herdr",
+  hermesBin = env.HERMES_BIN_PATH || "hermes",
   model = null,
   pluginRoot = path.join(moduleDirectory, ".."),
   sessionPollAttempts = 20,
@@ -99,7 +102,7 @@ export async function runAutoTitle({
       }
       const session = pane.agent_session;
       const agent = String(session?.agent || pane.agent || "").trim().toLowerCase();
-      if (!session?.value || (agent !== "codex" && agent !== "claude")) {
+      if (!session?.value || !["codex", "claude", "hermes"].includes(agent)) {
         return { status: "unsupported" };
       }
 
@@ -158,16 +161,24 @@ export async function runAutoTitle({
       }
 
       if (!resolvedTitle) {
-        const sessionPath =
-          session.kind === "path"
-            ? session.value
-            : await deps.locateSessionFile({
-                agent,
-                roots: sessionRoots,
-                sessionId: session.value,
-              });
-        if (!sessionPath) return { status: "pending", reason: "session-file-not-found" };
-        prompt = await deps.extractSessionPrompt({ agent, sessionPath });
+        if (agent === "hermes") {
+          prompt = await deps.readHermesSessionPrompt({
+            env,
+            hermesBin,
+            sessionId: session.value,
+          });
+        } else {
+          const sessionPath =
+            session.kind === "path"
+              ? session.value
+              : await deps.locateSessionFile({
+                  agent,
+                  roots: sessionRoots,
+                  sessionId: session.value,
+                });
+          if (!sessionPath) return { status: "pending", reason: "session-file-not-found" };
+          prompt = await deps.extractSessionPrompt({ agent, sessionPath });
+        }
         if (!prompt) return { status: "pending", reason: "prompt-not-found" };
 
         try {

@@ -39,6 +39,18 @@ function codexPane(title = null, tabLabel = "1") {
   };
 }
 
+function hermesPane(title = null, tabLabel = "1") {
+  const pane = codexPane(title, tabLabel);
+  pane.agent = "hermes";
+  pane.agent_session = {
+    agent: "hermes",
+    kind: "id",
+    source: "herdr:hermes",
+    value: "20260909_220657_f175d6",
+  };
+  return pane;
+}
+
 function invocationEnv(overrides = {}) {
   return {
     PATH: process.env.PATH,
@@ -150,6 +162,38 @@ test("first Codex event generates once, syncs native title, and suppresses dupli
   assert.equal(generationCount, 1);
   assert.equal(codexSyncCount, 1);
   assert.equal(paneTitle, "Fix checkout race");
+});
+
+test("Hermes event reads its exported prompt and updates the Herdr presentation", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "auto-title-hermes-run-"));
+  let writtenTitle = null;
+  let requestedSessionId = null;
+  const forbidden = async () => assert.fail("Hermes must not look for a JSONL session file");
+
+  const result = await runAutoTitle({
+    deps: {
+      generateTitle: async ({ prompt }) => {
+        assert.equal(prompt, "Fix Hermes pane titles");
+        return { title: "Fix Hermes titles", description: "Hermes pane title integration" };
+      },
+      locateSessionFile: forbidden,
+      readHermesSessionPrompt: async ({ sessionId }) => {
+        requestedSessionId = sessionId;
+        return "Fix Hermes pane titles";
+      },
+      readPane: async () => hermesPane(),
+      writePaneTitle: async ({ title }) => {
+        writtenTitle = title;
+        return { status: "updated", title };
+      },
+    },
+    env: invocationEnv(),
+    stateDir,
+  });
+
+  assert.deepEqual(result, { status: "updated", title: "Fix Hermes titles" });
+  assert.equal(requestedSessionId, "20260909_220657_f175d6");
+  assert.equal(writtenTitle, "Fix Hermes titles");
 });
 
 test("Codex detection waits for a resumed session and adopts its native title", async () => {

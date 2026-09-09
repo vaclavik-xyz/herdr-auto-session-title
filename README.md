@@ -15,7 +15,9 @@ The plugin runs after `pane.agent_detected`, useful
 2. For a resumed or switched Codex session, adopts its existing native thread
    name. Otherwise, reads the first usable user message from the local session
    JSONL and runs an isolated, ephemeral `codex exec` turn to generate a title
-   of at most 36 characters.
+   of at most 36 characters. Hermes prompts are read through its redacted,
+   user-prompts-only session export command instead of accessing `state.db`
+   directly.
 3. Reports the resolved title to Herdr with pane display metadata and renames the
    containing tab.
 4. For Codex panes, reads the native thread through `codex app-server` and sets
@@ -32,6 +34,7 @@ refresh action when you explicitly want to regenerate the current title.
 | --- | --- | --- |
 | Codex | Yes | Yes, via `thread/name/set` |
 | Claude Code | Yes | No |
+| Hermes | Yes | No; Hermes manual-title provenance is left untouched |
 | Other agents | Ignored | No |
 
 Manual titles win, subject to the non-atomic tab rename limitation documented
@@ -49,8 +52,9 @@ active, cleanup finishes first and the new session is synchronized immediately.
 - Herdr 0.7.0 or newer
 - Node.js 20 or newer
 - Codex CLI available on `PATH` and authenticated
+- Hermes CLI available on `PATH` when titling Hermes panes
 
-The Codex CLI is used for title generation for both supported agents. Native
+The Codex CLI is used for title generation for all supported agents. Native
 Codex synchronization additionally requires a Codex version that provides the
 `thread/read` and `thread/name/set` app-server methods. The protocol integration
 is tested with Codex CLI 0.146.0. If generation or native synchronization fails,
@@ -88,12 +92,13 @@ The action is also available through Herdr's plugin action UI.
 ## Privacy and safety
 
 - The plugin reads local Codex (`$CODEX_HOME/sessions`) or Claude Code
-  (`~/.claude/projects`) session JSONL files.
+  (`~/.claude/projects`) session JSONL files. For Hermes it invokes
+  `hermes sessions export - --only user-prompts --redact` for the exact session.
 - Up to the first 2,000 characters of the first user request are sent to the
   provider used by `codex exec` for title generation.
 - Generation uses `--ephemeral`, ignores user configuration and rules, runs in
   a read-only sandbox, and does not persist a new Codex session.
-- `HERDR_*` environment variables are removed from Codex subprocesses to avoid
+- `HERDR_*` environment variables are removed from Codex and Hermes subprocesses to avoid
   recursive integration behavior and leaking Herdr invocation context.
 - The user prompt is sent over standard input, so its text is not exposed in
   the `codex exec` subprocess command line.
