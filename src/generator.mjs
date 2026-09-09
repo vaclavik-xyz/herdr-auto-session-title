@@ -41,15 +41,20 @@ export async function generateTitle({
     cwd,
   ];
   if (model) args.push("--model", model);
-  args.push(buildGenerationPrompt(prompt));
+  args.push("-");
 
   try {
-    await execFileWithoutInput(codexBin, args, {
-      env: isolatedChildEnv(env),
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-    });
+    await execFileWithInput(
+      codexBin,
+      args,
+      {
+        env: isolatedChildEnv(env),
+        timeout: timeoutMs,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+      },
+      buildGenerationPrompt(prompt),
+    );
     const parsed = JSON.parse(await readFile(outputPath, "utf8"));
     const title = sanitizeTitle(parsed.title, 36);
     const description = sanitizeDescription(parsed.description, 100);
@@ -62,7 +67,7 @@ export async function generateTitle({
   }
 }
 
-function execFileWithoutInput(file, args, options) {
+function execFileWithInput(file, args, options, input) {
   return new Promise((resolve, reject) => {
     const child = execFile(file, args, options, (error, stdout, stderr) => {
       if (error) {
@@ -71,6 +76,6 @@ function execFileWithoutInput(file, args, options) {
       }
       resolve({ stderr, stdout });
     });
-    child.stdin?.end();
+    child.stdin?.end(input);
   });
 }

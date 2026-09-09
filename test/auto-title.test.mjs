@@ -41,6 +41,7 @@ function codexPane(title = null, tabLabel = "1") {
 
 function invocationEnv(overrides = {}) {
   return {
+    PATH: process.env.PATH,
     HERDR_PANE_ID: "w1:p1",
     HERDR_PLUGIN_EVENT: "pane.agent_status_changed",
     HERDR_PLUGIN_EVENT_JSON: JSON.stringify({

@@ -52,6 +52,9 @@ test("generateTitle runs an isolated ephemeral structured Codex turn", async () 
     record.args.slice(record.args.indexOf("--model"), record.args.indexOf("--model") + 2),
     ["--model", "gpt-test-title"],
   );
+  assert.equal(record.args.at(-1), "-");
+  assert.equal(record.args.includes("Fix the checkout race"), false);
+  assert.match(record.stdin, /User prompt:\nFix the checkout race/);
   await assert.rejects(access(record.outputPath), { code: "ENOENT" });
 });
 

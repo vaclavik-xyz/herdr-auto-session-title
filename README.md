@@ -95,6 +95,8 @@ The action is also available through Herdr's plugin action UI.
   a read-only sandbox, and does not persist a new Codex session.
 - `HERDR_*` environment variables are removed from Codex subprocesses to avoid
   recursive integration behavior and leaking Herdr invocation context.
+- The user prompt is sent over standard input, so its text is not exposed in
+  the `codex exec` subprocess command line.
 - Plugin state stores titles, a prompt hash, and session identifiers under
   `HERDR_PLUGIN_STATE_DIR`; it does not store prompt text.
 - Per-pane locks suppress duplicate concurrent generation. Ownership checks

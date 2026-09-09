@@ -2,10 +2,9 @@
 
 import { writeFile } from "node:fs/promises";
 
-if (process.env.FAKE_CODEX_REQUIRE_STDIN_EOF === "1") {
-  process.stdin.resume();
-  await new Promise((resolve) => process.stdin.on("end", resolve));
-}
+let stdin = "";
+process.stdin.setEncoding("utf8");
+for await (const chunk of process.stdin) stdin += chunk;
 
 const args = process.argv.slice(2);
 const outputIndex = args.indexOf("--output-last-message");
@@ -14,6 +13,7 @@ const record = {
   args,
   herdrEnvKeys: Object.keys(process.env).filter((key) => key.startsWith("HERDR_")),
   outputPath,
+  stdin,
 };
 
 await writeFile(process.env.FAKE_CODEX_RECORD, JSON.stringify(record));
