@@ -21,6 +21,15 @@ test("extractSessionPrompt returns the first usable Codex user request", async (
   assert.equal(prompt, "Fix the checkout race in src/cart.ts");
 });
 
+test("extractSessionPrompt reads current Codex response items after context blocks", async () => {
+  const prompt = await extractSessionPrompt({
+    agent: "codex",
+    sessionPath: path.join(fixtures, "codex-response-session.jsonl"),
+  });
+
+  assert.equal(prompt, "Add AI session titles to Herdeck");
+});
+
 test("extractSessionPrompt joins Claude text parts and ignores metadata", async () => {
   const prompt = await extractSessionPrompt({
     agent: "claude",

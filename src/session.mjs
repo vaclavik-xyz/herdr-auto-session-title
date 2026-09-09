@@ -56,10 +56,30 @@ async function findSessionFile(directory, expected, suffixMatch) {
 }
 
 function codexUserPrompt(entry) {
-  if (entry?.type !== "event_msg" || entry.payload?.type !== "user_message") {
+  if (entry?.type === "event_msg" && entry.payload?.type === "user_message") {
+    return typeof entry.payload.message === "string" ? entry.payload.message : null;
+  }
+  if (
+    entry?.type !== "response_item" ||
+    entry.payload?.type !== "message" ||
+    entry.payload?.role !== "user" ||
+    !Array.isArray(entry.payload.content)
+  ) {
     return null;
   }
-  return typeof entry.payload.message === "string" ? entry.payload.message : null;
+  const parts = entry.payload.content
+    .filter((part) => part?.type === "input_text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .filter((text) => !isCodexContextBlock(text));
+  return parts.length ? parts.join(" ") : null;
+}
+
+function isCodexContextBlock(value) {
+  const text = String(value ?? "").trimStart();
+  return (
+    text.startsWith("# AGENTS.md instructions for ") ||
+    text.startsWith("<environment_context>")
+  );
 }
 
 function claudeUserPrompt(entry) {
