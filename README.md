@@ -10,8 +10,9 @@ agent is Codex, also synchronizes the native Codex thread name through
 The plugin runs after `pane.agent_detected`, useful
 `pane.agent_status_changed`, and `pane.focused` events. It:
 
-1. Waits briefly for Herdr's session identity when a Codex process is first
-   detected.
+1. Waits briefly for Herdr's session identity when a Codex process is detected
+   or a later lifecycle event arrives. If the session transcript or first user
+   message is not available yet, retries those reads for a bounded time too.
 2. For a resumed or switched Codex session, adopts its existing native thread
    name. Otherwise, reads the first usable user message from the local session
    JSONL and runs an isolated, ephemeral `codex exec` turn to generate a title
@@ -29,6 +30,13 @@ The first request determines a newly generated automatic title. Follow-up
 messages do not continually rename the session. Resuming or switching to a
 thread that already has a native Codex name adopts that name instead. Use the
 refresh action when you explicitly want to regenerate the current title.
+
+Working, idle, and done status events can recover an untitled session. This
+allows the first response's completion to fill in a title if startup reads were
+too early, without requiring a second user request. Each identity/transcript
+poll uses at most 20 retries with a 100 ms delay; if data is still unavailable,
+the plugin returns `pending` and can retry on a later lifecycle event or manual
+refresh. Polling does not block the agent's turn.
 
 | Agent | Herdr pane title | Native agent title |
 | --- | --- | --- |

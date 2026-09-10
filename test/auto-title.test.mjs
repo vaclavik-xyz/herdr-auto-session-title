@@ -57,7 +57,7 @@ function invocationEnv(overrides = {}) {
     HERDR_PANE_ID: "w1:p1",
     HERDR_PLUGIN_EVENT: "pane.agent_status_changed",
     HERDR_PLUGIN_EVENT_JSON: JSON.stringify({
-      event: "pane.agent_status_changed",
+      event: "pane_agent_status_changed",
       data: { agent: "codex", agent_status: "working", pane_id: "w1:p1" },
     }),
     ...overrides,
@@ -68,7 +68,7 @@ function detectionEnv(overrides = {}) {
   return invocationEnv({
     HERDR_PLUGIN_EVENT: "pane.agent_detected",
     HERDR_PLUGIN_EVENT_JSON: JSON.stringify({
-      event: "pane.agent_detected",
+      event: "pane_agent_detected",
       data: { agent: "codex", pane_id: "w1:p1" },
     }),
     ...overrides,
@@ -79,7 +79,7 @@ function releasedEnv(overrides = {}) {
   return invocationEnv({
     HERDR_PLUGIN_EVENT: "pane.agent_detected",
     HERDR_PLUGIN_EVENT_JSON: JSON.stringify({
-      event: "pane.agent_detected",
+      event: "pane_agent_detected",
       data: {
         agent: null,
         final_status: "idle",
@@ -95,7 +95,7 @@ function focusedEnv(overrides = {}) {
   return invocationEnv({
     HERDR_PLUGIN_EVENT: "pane.focused",
     HERDR_PLUGIN_EVENT_JSON: JSON.stringify({
-      event: "pane.focused",
+      event: "pane_focused",
       data: { pane_id: "w1:p1", workspace_id: "w1" },
     }),
     ...overrides,
@@ -117,7 +117,7 @@ test("event filtering accepts useful lifecycle changes and manual refresh", () =
     shouldHandleInvocation(
       invocationEnv({
         HERDR_PLUGIN_EVENT_JSON: JSON.stringify({
-          event: "pane.agent_status_changed",
+          event: "pane_agent_status_changed",
           data: { agent_status: "blocked", pane_id: "w1:p1" },
         }),
       }),

@@ -39,7 +39,7 @@ export function shouldHandleInvocation(env) {
   if (env.HERDR_PLUGIN_EVENT === "pane.focused") return true;
   if (env.HERDR_PLUGIN_EVENT !== "pane.agent_status_changed") return false;
   const event = parseJson(env.HERDR_PLUGIN_EVENT_JSON);
-  return event?.data?.agent_status === "working" || event?.data?.agent_status === "idle";
+  return ["working", "idle", "done"].includes(event?.data?.agent_status);
 }
 
 export async function runAutoTitle({
@@ -56,7 +56,7 @@ export async function runAutoTitle({
   stateDir = env.HERDR_PLUGIN_STATE_DIR || path.join(os.tmpdir(), "herdr-auto-session-title"),
 } = {}) {
   if (!shouldHandleInvocation(env)) return { status: "ignored" };
-  const event = parseJson(env.HERDR_PLUGIN_EVENT_JSON);
+  const event = invocationEvent(env);
   const paneId = env.HERDR_PANE_ID || event?.data?.pane_id;
   if (!paneId) return { status: "ignored" };
   const deps = { ...defaultDependencies, ...dependencyOverrides };
@@ -102,22 +102,12 @@ export async function runAutoTitle({
       }
       const session = pane.agent_session;
       const agent = String(session?.agent || pane.agent || "").trim().toLowerCase();
-      if (!session?.value || !["codex", "claude", "hermes"].includes(agent)) {
+      if (!["codex", "claude", "hermes"].includes(agent)) {
         return { status: "unsupported" };
       }
+      if (!session?.value) return { status: "pending", reason: "session-identity-not-found" };
 
-      const currentPaneTitle = pane.title?.trim() || null;
-      const tabLabel = pane.tab?.label?.trim() || null;
-      const defaultTabLabel =
-        tabLabel && pane.tab?.number != null && tabLabel === String(pane.tab.number);
-      const currentTabTitle = defaultTabLabel ? null : tabLabel;
-      const ownedPaneTitle = confirmedPaneTitle(previous);
-      const ownedTabTitle = confirmedTabTitle(previous);
-      const manualTitle =
-        (currentPaneTitle && currentPaneTitle !== ownedPaneTitle
-          ? currentPaneTitle
-          : null) ||
-        (currentTabTitle && currentTabTitle !== ownedTabTitle ? currentTabTitle : null);
+      const manualTitle = manualPresentationTitle(pane, previous);
       if (manualTitle) {
         return { status: "preserved", title: manualTitle };
       }
@@ -168,16 +158,22 @@ export async function runAutoTitle({
             sessionId: session.value,
           });
         } else {
-          const sessionPath =
-            session.kind === "path"
-              ? session.value
-              : await deps.locateSessionFile({
-                  agent,
-                  roots: sessionRoots,
-                  sessionId: session.value,
-                });
-          if (!sessionPath) return { status: "pending", reason: "session-file-not-found" };
-          prompt = await deps.extractSessionPrompt({ agent, sessionPath });
+          const result = await waitForSessionPrompt({
+            agent,
+            attempts: sessionPollAttempts,
+            deps,
+            env,
+            herdrBin,
+            intervalMs: sessionPollIntervalMs,
+            pane,
+            paneId,
+            sessionRoots,
+          });
+          if (result.status === "pending") return result;
+          prompt = result.prompt;
+          pane = result.pane;
+          const lateManualTitle = manualPresentationTitle(pane, previous);
+          if (lateManualTitle) return { status: "preserved", title: lateManualTitle };
         }
         if (!prompt) return { status: "pending", reason: "prompt-not-found" };
 
@@ -409,6 +405,46 @@ function paneSessionKey(pane) {
   return [agent, session.source, session.kind, session.value].join(":");
 }
 
+async function waitForSessionPrompt({
+  agent,
+  attempts,
+  deps,
+  env,
+  herdrBin,
+  intervalMs,
+  pane,
+  paneId,
+  sessionRoots,
+}) {
+  const session = pane.agent_session;
+  const sessionKey = paneSessionKey(pane);
+  let current = pane;
+  for (let attempt = 0; ; attempt += 1) {
+    const sessionPath =
+      session.kind === "path"
+        ? session.value
+        : await deps.locateSessionFile({ agent, roots: sessionRoots, sessionId: session.value });
+    let prompt = null;
+    let reason = "session-file-not-found";
+    if (sessionPath) {
+      try {
+        prompt = await deps.extractSessionPrompt({ agent, sessionPath });
+        reason = "prompt-not-found";
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+    if (prompt) return { prompt, pane: current };
+    if (attempt >= attempts) return { status: "pending", reason };
+    await deps.sleep(intervalMs);
+    current = await deps.readPane({ env, herdrBin, paneId });
+    // A session switch during the wait must not apply the old session's title.
+    if (paneSessionKey(current) !== sessionKey) {
+      return { status: "pending", reason: "session-changed" };
+    }
+  }
+}
+
 async function waitForAgentSession({
   attempts,
   deps,
@@ -433,8 +469,8 @@ function shouldPreferNativeCodexTitle({ agent, force, sameSession }) {
 function shouldWaitForCodexSession(event, pane) {
   return (
     !pane.agent_session?.value &&
-    event?.event === "pane.agent_detected" &&
-    event?.data?.agent === "codex" &&
+    ["pane.agent_detected", "pane.agent_status_changed", "pane.focused"].includes(event?.event) &&
+    String(pane.agent || event?.data?.agent || "").trim().toLowerCase() === "codex" &&
     event?.data?.released !== true
   );
 }
@@ -473,6 +509,28 @@ function herdrPresentationMatches(pane, title) {
 
 function confirmedPaneTitle(state) {
   return state?.herdrPaneTitle ?? state?.herdrTitle ?? null;
+}
+
+function manualPresentationTitle(pane, previous) {
+  const paneTitle = pane.title?.trim() || null;
+  const tabLabel = pane.tab?.label?.trim() || null;
+  const defaultTabLabel =
+    tabLabel && pane.tab?.number != null && tabLabel === String(pane.tab.number);
+  const tabTitle = defaultTabLabel ? null : tabLabel;
+  return (
+    (paneTitle && paneTitle !== confirmedPaneTitle(previous) ? paneTitle : null) ||
+    (tabTitle && tabTitle !== confirmedTabTitle(previous) ? tabTitle : null)
+  );
+}
+
+function invocationEvent(env) {
+  const event = parseJson(env.HERDR_PLUGIN_EVENT_JSON);
+  if (!event) return null;
+  // Herdr uses dotted hook names in the environment and snake_case in JSON.
+  return {
+    ...event,
+    event: env.HERDR_PLUGIN_EVENT || event.event?.replace(/^pane_/u, "pane."),
+  };
 }
 
 function confirmedTabTitle(state) {
